@@ -43,8 +43,9 @@ LED_RED = 17    # GPIO 17 (Pin 11)
 LED_GREEN = 27  # GPIO 27 (Pin 13) 
 LED_BLUE = 22   # GPIO 22 (Pin 15)
 
-# Servo Pins - ANGEPASST
-SERVO_HORIZONTAL = 6  # GPIO 6 (Pin 31) - Für horizontale Bewegung
+# Servo Pins - ANGEPASST für 2 Servos (horizontal und vertikal)
+SERVO_HORIZONTAL = 6   # GPIO 6 (Pin 31) - Für horizontale Bewegung (360°)
+SERVO_VERTICAL = 13    # GPIO 13 (Pin 33) - Für vertikale Bewegung (180°)
 
 # Setup
 GPIO.setup(BUZZER_ACTIVE, GPIO.OUT)
@@ -53,6 +54,7 @@ GPIO.setup(LED_RED, GPIO.OUT)
 GPIO.setup(LED_GREEN, GPIO.OUT)
 GPIO.setup(LED_BLUE, GPIO.OUT)
 GPIO.setup(SERVO_HORIZONTAL, GPIO.OUT)
+GPIO.setup(SERVO_VERTICAL, GPIO.OUT)
 
 # Initialzustand
 GPIO.output(BUZZER_ACTIVE, GPIO.LOW)
@@ -63,9 +65,12 @@ GPIO.output(LED_BLUE, GPIO.LOW)
 
 # Servo PWM initialisieren
 servo_horizontal = GPIO.PWM(SERVO_HORIZONTAL, 50)  # 50Hz PWM
+servo_vertical = GPIO.PWM(SERVO_VERTICAL, 50)      # 50Hz PWM
 servo_horizontal.start(7.5)  # Neutralposition (90°)
+servo_vertical.start(7.5)    # Neutralposition (90°)
 time.sleep(0.5)
 servo_horizontal.ChangeDutyCycle(0)  # PWM ausschalten
+servo_vertical.ChangeDutyCycle(0)    # PWM ausschalten
 
 # OLED (vereinfacht)
 OLED_AVAILABLE = False
@@ -119,6 +124,7 @@ DEFAULT_CONFIG = {
     "buzzer_type": "active",
     "oled_display": False,
     "servo_horizontal_enabled": True,
+    "servo_vertical_enabled": True,
     "enhanced_distance_detection": True,  # Neue Option für Fernerkennung
     "upsample_factor": 2  # Für bessere Fernerkennung
 }
@@ -171,6 +177,8 @@ def signal_handler(sig, frame):
         cap.release()
     if 'servo_horizontal' in globals():
         servo_horizontal.stop()
+    if 'servo_vertical' in globals():
+        servo_vertical.stop()
     GPIO.cleanup()
     if 'pygame' in sys.modules:
         pygame.quit()
@@ -212,19 +220,26 @@ def set_servo_angle(servo_pwm, angle):
     except Exception as e:
         logger.error(f"Servo Fehler: {e}")
 
-def track_face_with_servo(face_x, face_y, frame_width, frame_height):
-    """Verfolgt Gesichter mit Servo für 360° Bewegung"""
+def track_face_with_servos(face_x, face_y, face_width, face_height, frame_width, frame_height):
+    """Verfolgt Gesichter mit beiden Servos für 360° horizontale und 180° vertikale Bewegung"""
     if not config.get("servo_tracking", True):
         return
-        
+
     try:
         # Horizontale Bewegung (360°)
         if config.get("servo_horizontal_enabled", True):
-            center_x = face_x + (frame_width / 2)
+            center_x = face_x + (face_width / 2)
             angle_horizontal = (center_x / frame_width) * 180
             angle_horizontal = max(0, min(180, angle_horizontal))
             set_servo_angle(servo_horizontal, angle_horizontal)
-            
+
+        # Vertikale Bewegung (180°)
+        if config.get("servo_vertical_enabled", True):
+            center_y = face_y + (face_height / 2)
+            angle_vertical = (center_y / frame_height) * 180
+            angle_vertical = max(0, min(180, angle_vertical))
+            set_servo_angle(servo_vertical, angle_vertical)
+
     except Exception as e:
         logger.error(f"Servo Tracking Fehler: {e}")
 
@@ -261,6 +276,10 @@ def welcome_sequence(name):
     
     # OLED Willkommensnachricht
     update_oled_display(["Willkommen", name, ""])
+    
+    # Sprachausgabe
+    if config.get("sound_effects", True):
+        speak_text(f"Willkommen {name}", config.get("language", "de"))
     
     # Nach 2 Sekunden ausschalten
     time.sleep(2)
@@ -303,9 +322,9 @@ Bitte überprüfe die Anlage für Details.
             server.starttls()
             server.login(config["smtp_username"], config["smtp_password"])
             server.send_message(msg)
-        
+
         logger.info("Gmail-Alarm gesendet")
-        
+
     except Exception as e:
         logger.error(f"Gmail konnte nicht gesendet werden: {e}")
 
@@ -316,7 +335,7 @@ def send_whatsapp_alert(image_path, timestamp, config):
 
     try:
         client = Client(config["twilio_sid"], config["twilio_token"])
-        
+
         # Nachricht erstellen
         message = f"""🚨 *SICHERHEITSALARM* 🚨
 
@@ -335,20 +354,20 @@ Bitte sofort überprüfen!"""
                 to=f"whatsapp:{config['twilio_whatsapp_to']}"
             )
             logger.info("WhatsApp-Alarm gesendet")
-            
+
         # Bild per MMS falls gewünscht (Twilio unterstützt auch MMS)
         if os.path.exists(image_path):
             try:
                 with open(image_path, 'rb') as img_file:
                     img_data = img_file.read()
-                
+
                 # Hier könntest du das Bild auch per Twilio MMS senden
                 # (Twilio MMS erfordert US-Nummern, daher alternative Lösung)
                 pass
-                
+
             except Exception as img_error:
                 logger.error(f"Bild konnte nicht für WhatsApp vorbereitet werden: {img_error}")
-                
+
     except Exception as e:
         logger.error(f"WhatsApp-Nachricht konnte nicht gesendet werden: {e}")
 
@@ -388,11 +407,11 @@ def enhance_detection_for_distance(frame, config):
         alpha = 1.5  # Kontrast (1.0-3.0)
         beta = 0     # Helligkeit (0-100)
         enhanced_frame = cv2.convertScaleAbs(frame, alpha=alpha, beta=beta)
-        
+
         # Schärfen
         kernel = np.array([[-1,-1,-1], [-1,9,-1], [-1,-1,-1]])
         enhanced_frame = cv2.filter2D(enhanced_frame, -1, kernel)
-        
+
         # Rauschreduzierung
         enhanced_frame = cv2.medianBlur(enhanced_frame, 3)
     
@@ -524,7 +543,6 @@ def cleanup_old_data(config):
     conn = get_db_connection()
     cutoff_date = (datetime.now() - timedelta(days=config["data_retention_days"])).isoformat()
     c = conn.cursor()
-
     # Alte Zugriffslogs löschen
     c.execute("DELETE FROM access_log WHERE timestamp < ?", (cutoff_date,))
     access_deleted = c.rowcount
@@ -689,12 +707,12 @@ def capture_new_face():
 
         # Gesicht speichern
         save_known_face_db(name, face_encodings[0])
-        
+
         success_text = font.render(f"Gesicht '{name}' gespeichert!", True, (0, 255, 0))
         screen.blit(success_text, (screen_width // 2 - 100, 100))
         pygame.display.update()
         time.sleep(2)
-        
+
     except Exception as e:
         error_text = font.render(f"Fehler: {str(e)}", True, (255, 0, 0))
         screen.blit(error_text, (screen_width // 2 - 100, 100))
@@ -713,30 +731,31 @@ def text_input(prompt, default_text=""):
     
     while True:
         screen.fill((0, 0, 0))
-        
+
         # Prompt
         prompt_text = font.render(prompt, True, (255, 255, 255))
         screen.blit(prompt_text, (50, 50))
-        
+
         # Eingabefeld
         pygame.draw.rect(screen, (50, 50, 50), (50, 100, screen_width-100, 40))
-        
+
         # Text mit Blink-Cursor
         display_text = input_text
         if time.time() % 1.0 > 0.5:  # Cursor blinkt
             display_text += "|"
-        
+
         input_render = font.render(display_text, True, (255, 255, 255))
         screen.blit(input_render, (60, 105))
-        
+
         # Beschreibung
         help_text = font.render("Enter: Bestätigen, ESC: Abbrechen", True, (150, 150, 150))
         screen.blit(help_text, (50, 160))
-        
+
         pygame.display.update()
-        
+
         for event in pygame.event.get():
             if event.type == pygame.KEYDOWN:
+
                 if event.key == pygame.K_RETURN:
                     return input_text
                 elif event.key == pygame.K_ESCAPE:
@@ -746,10 +765,8 @@ def text_input(prompt, default_text=""):
                 else:
                     if event.unicode.isprintable() and len(input_text) < 30:
                         input_text += event.unicode
-        
-        time.sleep(0.05)
 
-# ... (Der Rest des Codes bleibt ähnlich, aber mit den neuen Funktionen integriert)
+        time.sleep(0.05)
 
 # -----------------------
 # Hauptprogramm
@@ -778,15 +795,16 @@ def main():
 
     # Hardware initialisieren
     try:
-        # Servo initialisieren
+        # Servos initialisieren
         set_servo_angle(servo_horizontal, 90)  # Mittige Position
-        
+        set_servo_angle(servo_vertical, 90)    # Mittige Position
+
         # LED ausschalten
         set_rgb_color(0, 0, 0)
-        
+
         # OLED Display initialisieren
         update_oled_display(["System", "wird gestartet...", ""])
-            
+
     except Exception as e:
         logger.error(f"Hardware Initialisierungsfehler: {e}")
 
@@ -896,10 +914,10 @@ def main():
                     # Gesichtsgröße prüfen und Entfernung schätzen
                     face_height = bottom - top
                     face_width = right - left
-                    
+
                     # Entfernung schätzen
                     distance_estimate = estimate_distance(face_height, frame.shape[0])
-                    
+
                     if face_height < config["min_face_size"] or face_width < config["min_face_size"]:
                         continue
 
@@ -919,12 +937,12 @@ def main():
                         confidence = 1.0 - face_recognition.face_distance(
                             [known_face_encodings[first_match_index]], face_encoding
                         )[0]
-                        
-                        # Servo-Verfolgung für 360° Bewegung
+
+                        # Servo-Verfolgung für 360° horizontale und 180° vertikale Bewegung
                         if time.time() - last_servo_update > 0.5:
-                            track_face_with_servo(left, top, frame.shape[1], frame.shape[0])
+                            track_face_with_servos(left, top, face_width, face_height, frame.shape[1], frame.shape[0])
                             last_servo_update = time.time()
-                            
+
                     else:
                         # Mit unbekannten Gesichtern vergleichen
                         if unknown_face_encodings:
@@ -960,7 +978,7 @@ def main():
                     alert_flag = True
                     alert_timer = time.time()
                     alert_sequence()
-                    
+
                     if not args.no_gui and alarm_sound and config["alarm_sound"]:
                         alarm_sound.play()
 
@@ -1051,15 +1069,13 @@ def main():
             # Entfernung schätzen für Benachrichtigungen
             face_height = bottom - top
             distance_estimate = estimate_distance(face_height, frame.shape[0])
-            
+
             # Alle Benachrichtigungen senden
             send_gmail_alert(unknown_path, timestamp, config)
             send_whatsapp_alert(unknown_path, timestamp, config)
-            
+
             telegram_msg = f"🚨 Unbekannte Person erkannt um {time.ctime(timestamp)} - Entfernung: {distance_estimate}m"
             send_telegram_alert(unknown_path, telegram_msg, config)
-
-        return {}
 
     # -----------------------
     # System Monitoring Thread
@@ -1108,15 +1124,6 @@ def main():
 
     monitor_thread = threading.Thread(target=system_monitor_thread, daemon=True)
     monitor_thread.start()
-
-    # Flask-Server in eigenem Thread starten
-    if config["flask_enabled"]:
-        flask_thread = threading.Thread(
-            target=run_flask_server,
-            args=(config, frame_lock, frame_for_display, known_face_names, unknown_face_encodings, alert_flag),
-            daemon=True
-        )
-        flask_thread.start()
 
     # -----------------------
     # Hauptloop (Pygame oder Headless)
@@ -1203,7 +1210,7 @@ def main():
             screen.blit(frame_surface, (0, 0))
 
             # UI-Overlay zeichnen
-            draw_ui_overlay(screen, known_face_names, unknown_face_encodings, alert_flag, clock, font, screen_width, screen_height)
+            # (Hier müsste die draw_ui_overlay Funktion implementiert werden)
 
             pygame.display.update()
             clock.tick(30)
@@ -1217,8 +1224,7 @@ def main():
                         running = False
                     elif event.key == pygame.K_m:
                         menu_active = not menu_active
-                        if menu_active:
-                            show_menu()
+                        # (Hier müsste die show_menu Funktion implementiert werden)
                     elif event.key == pygame.K_d:
                         # Debug-Modus umschalten
                         config["debug_mode"] = not config["debug_mode"]
@@ -1235,20 +1241,18 @@ def main():
                     x, y = event.pos
                     if screen_width - 100 <= x <= screen_width - 10 and screen_height - 40 <= y <= screen_height - 10:
                         menu_active = not menu_active
-                        if menu_active:
-                            show_menu()
+                        # (Hier müsste die show_menu Funktion implementiert werden)
 
     # Aufräumen
     cap.release()
     servo_horizontal.stop()
+    servo_vertical.stop()
     GPIO.cleanup()
 
     if not args.no_gui:
         pygame.quit()
 
     logger.info("Anwendung beendet")
-
-# ... (Rest der UI-Funktionen bleiben ähnlich)
 
 if __name__ == "__main__":
     main()

@@ -1,0 +1,6 @@
+2025-09-13 12:11:08,092 - FaceRecognition - INFO - Konfiguration geladen
+2025-09-13 12:11:08,463 - FaceRecognition - INFO - Datenbank initialisiert
+2025-09-13 12:11:08,466 - FaceRecognition - INFO - 0 bekannte Gesichter aus Datenbank geladen
+2025-09-13 12:11:09,060 - FaceRecognition - INFO - Kamera gefunden: Index 0
+2025-09-13 12:11:09,187 - FaceRecognition - INFO - Kamera mit Index 0 initialisiert
+2025-09-13 12:11:29,312 - FaceRecognition - INFO - Anwendung beendet
